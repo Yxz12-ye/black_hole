@@ -1,8 +1,16 @@
-#include <iostream>
+#include <GLFW/glfw3.h>
 
 #include "app/app.hpp"
 
 int main(int argc, char* argv[]) {
-    App app;
-    return app.run(argc, argv);
+    if (!glfwInit()) {
+        return -1;
+    }
+
+    {
+        App app;
+        int result = app.run(argc, argv);
+        glfwTerminate();
+        return result;
+    }
 }

@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-project(CppTemplate
+project(BlackHole
     VERSION 0.1.0
     DESCRIPTION "Lightweight cross-platform C++ template"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 # ============================================================================
@@ -39,6 +39,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/use_vcpkg.cmake)
 # Compiler Warnings
 # ============================================================================
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/compiler_warnings.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/glad.cmake)
 
 # ============================================================================
 # Configure Header
@@ -73,6 +74,26 @@ add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}/generated
+    ${CMAKE_SOURCE_DIR}/3rdparty/glad/include
+)
+
+# ============================================================================
+# Third-Party Libraries
+# ============================================================================
+# GLFW (built from 3rdparty)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/glfw)
+
+# ImGui (wrap 3rdparty sources without touching submodule)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/imgui.cmake)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    glfw
+    glad
+    imgui
 )
 
 if(ENABLE_WARNINGS)
