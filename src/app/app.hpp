@@ -44,4 +44,15 @@ private:
     float m_lightPos[3] = {0.0f, 1.5f, 0.0f};
     float m_lightColor[3] = {1.0f, 0.95f, 0.9f};
     float m_lightIntensity = 10.0f;
+
+    // Black hole accretion disk parameters
+    bool  m_enableDisk = true;
+    float m_diskInnerRadius = 0.8f;
+    float m_diskOuterRadius = 3.0f;
+    float m_diskThickness   = 0.15f;
+    float m_diskNoiseScale  = 0.8f;
+    float m_diskEmission    = 1.8f;
+    float m_diskBaseColor[3] = {1.0f, 0.7f, 0.4f};
+    float m_diskHotColor[3]  = {1.3f, 1.0f, 0.7f};
+    float m_timeSeconds     = 0.0f;
 };

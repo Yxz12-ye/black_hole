@@ -123,6 +123,7 @@ int App::run(int argc, char* argv[]) {
     Logger::info("Ready to process commands");
 
     float clear_color[4] = {0.02f, 0.02f, 0.05f, 1.0f};
+    auto startTime = std::chrono::steady_clock::now();
 
     // Main loop
     while (!glfwWindowShouldClose(m_window)) {
@@ -133,10 +134,17 @@ int App::run(int argc, char* argv[]) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // Update time for animation (seconds since start)
+        {
+            auto now = std::chrono::steady_clock::now();
+            m_timeSeconds =
+                std::chrono::duration<float>(now - startTime).count();
+        }
+
         // Controls window
         ImGui::Begin("Ray Tracing Controls");
         ImGui::Text("Camera");
-        ImGui::SliderFloat3("Position", m_camPos, -5.0f, 5.0f);
+        ImGui::SliderFloat3("Position", m_camPos, -50.0f, 50.0f);
         ImGui::SliderFloat("Yaw (deg)", &m_camYaw, -180.0f, 180.0f);
         ImGui::SliderFloat("Pitch (deg)", &m_camPitch, -89.0f, 89.0f);
         ImGui::SliderFloat("FOV Y (deg)", &m_fovY, 20.0f, 90.0f);
@@ -146,6 +154,17 @@ int App::run(int argc, char* argv[]) {
         ImGui::SliderFloat3("Light Pos", m_lightPos, -3.0f, 3.0f);
         ImGui::ColorEdit3("Light Color", m_lightColor);
         ImGui::SliderFloat("Intensity", &m_lightIntensity, 0.0f, 50.0f);
+
+        ImGui::Separator();
+        ImGui::Text("Black Hole / Disk");
+        ImGui::Checkbox("Enable Disk", &m_enableDisk);
+        ImGui::SliderFloat("Disk Inner Radius", &m_diskInnerRadius, 0.1f, 5.0f);
+        ImGui::SliderFloat("Disk Outer Radius", &m_diskOuterRadius, 0.2f, 10.0f);
+        ImGui::SliderFloat("Disk Thickness", &m_diskThickness, 0.01f, 0.5f);
+        ImGui::SliderFloat("Disk Noise Scale", &m_diskNoiseScale, 0.5f, 10.0f);
+        ImGui::SliderFloat("Disk Emission", &m_diskEmission, 0.1f, 5.0f);
+        ImGui::ColorEdit3("Disk Base Color", m_diskBaseColor);
+        ImGui::ColorEdit3("Disk Hot Color", m_diskHotColor);
 
         ImGui::Separator();
         ImGui::ColorEdit3("Background", clear_color);
@@ -198,6 +217,16 @@ int App::run(int argc, char* argv[]) {
         int loc_light_pos = glGetUniformLocation(m_raytraceProgram, "u_light_pos");
         int loc_light_color = glGetUniformLocation(m_raytraceProgram, "u_light_color");
         int loc_light_intensity = glGetUniformLocation(m_raytraceProgram, "u_light_intensity");
+        int loc_time = glGetUniformLocation(m_raytraceProgram, "u_time");
+
+        int loc_enable_disk = glGetUniformLocation(m_raytraceProgram, "u_enable_disk");
+        int loc_disk_inner_radius = glGetUniformLocation(m_raytraceProgram, "u_disk_inner_radius");
+        int loc_disk_outer_radius = glGetUniformLocation(m_raytraceProgram, "u_disk_outer_radius");
+        int loc_disk_thickness = glGetUniformLocation(m_raytraceProgram, "u_disk_thickness");
+        int loc_disk_noise_scale = glGetUniformLocation(m_raytraceProgram, "u_disk_noise_scale");
+        int loc_disk_emission = glGetUniformLocation(m_raytraceProgram, "u_disk_emission");
+        int loc_disk_base_color = glGetUniformLocation(m_raytraceProgram, "u_disk_base_color");
+        int loc_disk_hot_color = glGetUniformLocation(m_raytraceProgram, "u_disk_hot_color");
 
         // 写入相机参数, camRight和camUp确定光追平面
         if (loc_cam_pos >= 0) {
@@ -228,6 +257,35 @@ int App::run(int argc, char* argv[]) {
         }
         if (loc_light_intensity >= 0) {
             glUniform1f(loc_light_intensity, m_lightIntensity);
+        }
+        if (loc_time >= 0) {
+            glUniform1f(loc_time, m_timeSeconds);
+        }
+
+        // Black hole disk uniforms
+        if (loc_enable_disk >= 0) {
+            glUniform1i(loc_enable_disk, m_enableDisk ? 1 : 0);
+        }
+        if (loc_disk_inner_radius >= 0) {
+            glUniform1f(loc_disk_inner_radius, m_diskInnerRadius);
+        }
+        if (loc_disk_outer_radius >= 0) {
+            glUniform1f(loc_disk_outer_radius, m_diskOuterRadius);
+        }
+        if (loc_disk_thickness >= 0) {
+            glUniform1f(loc_disk_thickness, m_diskThickness);
+        }
+        if (loc_disk_noise_scale >= 0) {
+            glUniform1f(loc_disk_noise_scale, m_diskNoiseScale);
+        }
+        if (loc_disk_emission >= 0) {
+            glUniform1f(loc_disk_emission, m_diskEmission);
+        }
+        if (loc_disk_base_color >= 0) {
+            glUniform3fv(loc_disk_base_color, 1, m_diskBaseColor);
+        }
+        if (loc_disk_hot_color >= 0) {
+            glUniform3fv(loc_disk_hot_color, 1, m_diskHotColor);
         }
 
         // Bind environment cubemap to texture unit 0 for the ray tracing shader
