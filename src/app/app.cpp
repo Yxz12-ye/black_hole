@@ -267,8 +267,9 @@ void App::initRendering() {
 
     // Load shaders from files (relative to working directory)
     std::string vertSrc = loadFileToString("D:/Code/Cpp/black_hole/src/shader/fullscreen.vert");
+    // std::string fragSrc = loadFileToString("D:/Code/Cpp/black_hole/src/shader/room_raytrace.frag");
     std::string fragSrc = loadFileToString("D:/Code/Cpp/black_hole/src/shader/black_hole.frag");
-
+    
     m_raytraceProgram = createShaderProgram(vertSrc.c_str(), fragSrc.c_str());
 
     // Load cubemap from separate faces in assets/Nebula6 (px/nx/py/ny/pz/nz).

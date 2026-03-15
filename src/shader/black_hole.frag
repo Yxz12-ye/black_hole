@@ -138,43 +138,102 @@ vec3 sampleEnv(vec3 dir) {
     return mapped;
 }
 
-// Very simple black hole lensing approximation around origin.
-// Camera at ro, initial ray rd. Returns color from lensed background or black if ray falls in.
-vec3 traceBlackHole(vec3 ro, vec3 rd) {
-    const float BH_RADIUS = 0.6;      // approximate event horizon radius
-    const float G_STRENGTH = 0.8;     // controls how strong bending is
-    const float STEP_SIZE = 0.08;     // integration step length
-    const float MAX_DIST = 100.0;     // when we consider ray escaped to infinity
-    const int   MAX_STEPS = 128;
+// =============================
+// GR-based black-hole lensing
+// =============================
+//
+// 使用 相关公式.md 中给出的史瓦西度规与光线偏折加速度
+//   a_GR = -3 (GM/c^2) h^2 / r^5 * r_hat
+// 其中 h = |r × v| 是光子的（比）角动量，r_hat = r / |r|。
+// 我们在 3D 欧式空间中数值积分光线的空间轨迹，
+// 使用 Runge–Kutta 4 阶方法逼近广义相对论给出的光线弯曲轨迹。
 
-    vec3 p = ro;
-    vec3 d = normalize(rd);
+// Schwarzschild 半径（事件视界）r_s = 2GM/c^2，在当前单位制下用一个常数给出。
+// 如果想调节黑洞大小，只需要改这个参数。
+const float SCHWARZSCHILD_RADIUS = 0.6;  // r_s in "world units"
+
+// 数值积分参数：这里只追求物理准确性，不考虑性能。
+const float STEP_SIZE      = 0.02;   // 仿射参数步长（越小越精确）
+const int   MAX_STEPS      = 800;    // 最大步数（越大越精确）
+const float FAR_DISTANCE   = 150.0;  // 认为已经到达“无穷远”的半径
+const float EPS_RADIUS     = 1e-4;   // 避免除零
+
+// 根据 a_GR = -3 (GM/c^2) h^2 / r^5 * r_hat 计算加速度。
+// 这里把 GM/c^2 = r_s / 2 代入：
+//   a_GR = -3 (r_s / 2) h^2 / r^5 * r_hat = -1.5 * r_s * h^2 / r^5 * r_hat
+vec3 computeGRAcceleration(vec3 pos, vec3 vel) {
+    float r = length(pos);
+    if (r < EPS_RADIUS) {
+        return vec3(0.0);
+    }
+
+    vec3 rhat = pos / r;
+
+    // 比角动量 h = r × v
+    vec3 h = cross(pos, vel);
+    float h2 = dot(h, h);
+
+    float rs = SCHWARZSCHILD_RADIUS;
+    float invR = 1.0 / r;
+    float invR2 = invR * invR;
+    float invR5 = invR2 * invR2 * invR; // 1 / r^5
+
+    float coeff = -1.5 * rs * h2 * invR5;
+    return coeff * rhat;
+}
+
+// 单步 RK4 积分：从 (x, v) 沿 λ 方向推进一个 STEP_SIZE。
+void rk4Step(inout vec3 x, inout vec3 v) {
+    float h = STEP_SIZE;
+
+    vec3 k1_x = v;
+    vec3 k1_v = computeGRAcceleration(x, v);
+
+    vec3 v2 = normalize(v + 0.5 * h * k1_v);
+    vec3 k2_x = v2;
+    vec3 k2_v = computeGRAcceleration(x + 0.5 * h * k1_x, v2);
+
+    vec3 v3 = normalize(v + 0.5 * h * k2_v);
+    vec3 k3_x = v3;
+    vec3 k3_v = computeGRAcceleration(x + 0.5 * h * k2_x, v3);
+
+    vec3 v4 = normalize(v + h * k3_v);
+    vec3 k4_x = v4;
+    vec3 k4_v = computeGRAcceleration(x + h * k3_x, v4);
+
+    x += (h / 6.0) * (k1_x + 2.0 * k2_x + 2.0 * k3_x + k4_x);
+    v = normalize(v + (h / 6.0) * (k1_v + 2.0 * k2_v + 2.0 * k3_v + k4_v));
+}
+
+// 严格的 GR 光线追踪近似：
+// - 黑洞位于原点，史瓦西半径为 SCHWARZSCHILD_RADIUS；
+// - 从相机位置 ro，沿初始方向 rd 反向追踪光线（在仿射参数意义下）；
+// - 如果轨迹落入 r < r_s，则认为光线被黑洞吸收，像素为黑；
+// - 如果轨迹到达 r > FAR_DISTANCE，则认为到达无穷远，
+//   使用此处的切向方向 v 作为“来自天空”的方向，从 cubemap 采样。
+vec3 traceBlackHole(vec3 ro, vec3 rd) {
+    vec3 x = ro;
+    vec3 v = normalize(rd);
 
     for (int i = 0; i < MAX_STEPS; ++i) {
-        float r = length(p);
+        float r = length(x);
 
-        // Fell into black hole: render as black (or could add accretion disk here)
-        if (r < BH_RADIUS) {
+        // 事件视界内：黑洞
+        if (r < SCHWARZSCHILD_RADIUS) {
             return vec3(0.0);
         }
 
-        // Escaped far away: sample environment with final direction
-        if (r > MAX_DIST) {
-            return sampleEnv(d);
+        // 远离黑洞：认为进入了“平直时空”区域，方向基本稳定
+        if (r > FAR_DISTANCE) {
+            // 在无穷远处，光线方向 v 即为到达观察者的反向，所以用 v 采样天空盒
+            return sampleEnv(v);
         }
 
-        // Simple "gravity" that bends the ray toward the origin.
-        vec3 toBH = -normalize(p);           // BH at origin
-        float invR2 = 1.0 / max(r * r, 1e-4);
-        vec3 accel = toBH * (G_STRENGTH * invR2);
-
-        // Update direction and position
-        d = normalize(d + accel * STEP_SIZE);
-        p += d * STEP_SIZE;
+        rk4Step(x, v);
     }
 
-    // If integration didn't escape or fall in, fall back to environment.
-    return sampleEnv(d);
+    // 数值积分未明显逃逸或落入：退化为用当前方向采样天空盒。
+    return sampleEnv(v);
 }
 
 void main() {

@@ -138,14 +138,16 @@ vec3 sampleEnv(vec3 dir) {
     return mapped;
 }
 
-// Very simple black hole lensing approximation around origin.
+// GR-inspired black hole lensing approximation around origin, using
+//   a_GR = -3 (GM/c^2) h^2 / r^5  * r_hat
+// where h = |r x v| is the (approximate) angular momentum of the photon.
 // Camera at ro, initial ray rd. Returns color from lensed background or black if ray falls in.
 vec3 traceBlackHole(vec3 ro, vec3 rd) {
-    const float BH_RADIUS = 0.6;      // approximate event horizon radius
-    const float G_STRENGTH = 0.8;     // controls how strong bending is
-    const float STEP_SIZE = 0.08;     // integration step length
-    const float MAX_DIST = 100.0;     // when we consider ray escaped to infinity
-    const int   MAX_STEPS = 128;
+    const float BH_RADIUS      = 0.6;   // approximate Schwarzschild radius
+    const float LENS_STRENGTH  = 1.0;   // overall GR lensing strength scale
+    const float STEP_SIZE      = 0.06;  // integration step length
+    const float MAX_DIST       = 100.0; // when we consider ray escaped to infinity
+    const int   MAX_STEPS      = 160;
 
     vec3 p = ro;
     vec3 d = normalize(rd);
@@ -163,10 +165,18 @@ vec3 traceBlackHole(vec3 ro, vec3 rd) {
             return sampleEnv(d);
         }
 
-        // Simple "gravity" that bends the ray toward the origin.
-        vec3 toBH = -normalize(p);           // BH at origin
-        float invR2 = 1.0 / max(r * r, 1e-4);
-        vec3 accel = toBH * (G_STRENGTH * invR2);
+        // GR-inspired bending toward origin using effective acceleration:
+        //   a_GR ∝ -3 (GM/c^2) h^2 / r^5 * r_hat
+        // In our units we take GM/c^2 ~ BH_RADIUS, and keep a tunable LENS_STRENGTH.
+        vec3 rhat = normalize(p);
+        vec3 h    = cross(p, d);              // angular momentum ~ r x v
+        float h2  = dot(h, h);
+        float invR = 1.0 / max(r, BH_RADIUS * 0.5);
+        float invR2 = invR * invR;
+        float invR5 = invR2 * invR2 * invR;   // 1 / r^5
+        float rs    = BH_RADIUS;              // treat BH_RADIUS as ~ Schwarzschild radius
+
+        vec3 accel = -3.0 * LENS_STRENGTH * rs * h2 * invR5 * rhat;
 
         // Update direction and position
         d = normalize(d + accel * STEP_SIZE);
