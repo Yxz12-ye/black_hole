@@ -138,6 +138,45 @@ vec3 sampleEnv(vec3 dir) {
     return mapped;
 }
 
+// Very simple black hole lensing approximation around origin.
+// Camera at ro, initial ray rd. Returns color from lensed background or black if ray falls in.
+vec3 traceBlackHole(vec3 ro, vec3 rd) {
+    const float BH_RADIUS = 0.6;      // approximate event horizon radius
+    const float G_STRENGTH = 0.8;     // controls how strong bending is
+    const float STEP_SIZE = 0.08;     // integration step length
+    const float MAX_DIST = 100.0;     // when we consider ray escaped to infinity
+    const int   MAX_STEPS = 128;
+
+    vec3 p = ro;
+    vec3 d = normalize(rd);
+
+    for (int i = 0; i < MAX_STEPS; ++i) {
+        float r = length(p);
+
+        // Fell into black hole: render as black (or could add accretion disk here)
+        if (r < BH_RADIUS) {
+            return vec3(0.0);
+        }
+
+        // Escaped far away: sample environment with final direction
+        if (r > MAX_DIST) {
+            return sampleEnv(d);
+        }
+
+        // Simple "gravity" that bends the ray toward the origin.
+        vec3 toBH = -normalize(p);           // BH at origin
+        float invR2 = 1.0 / max(r * r, 1e-4);
+        vec3 accel = toBH * (G_STRENGTH * invR2);
+
+        // Update direction and position
+        d = normalize(d + accel * STEP_SIZE);
+        p += d * STEP_SIZE;
+    }
+
+    // If integration didn't escape or fall in, fall back to environment.
+    return sampleEnv(d);
+}
+
 void main() {
     // Generate ray direction from camera through pixel
     vec2 fragCoord = v_uv * u_resolution;
@@ -158,8 +197,8 @@ void main() {
     vec3 rd = normalize(rd_cam.x * u_cam_right + rd_cam.y * u_cam_up + rd_cam.z * u_cam_forward);
     vec3 ro = u_cam_pos;
 
-    // 现在不再与房间/球体求交，直接把 HDR 环境贴图当天空盒
-    vec3 color = sampleEnv(rd);
+    // Black hole at world origin; integrate a bent light path and sample skybox.
+    vec3 color = traceBlackHole(ro, rd);
 
     FragColor = vec4(color, 1.0);
 }
