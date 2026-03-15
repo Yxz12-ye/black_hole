@@ -18,7 +18,8 @@ private:
     void shutdownRendering();
     unsigned int createShaderProgram(const char* vertexSrc, const char* fragmentSrc);
     unsigned int compileShader(unsigned int type, const char* src);
-    unsigned int createTexture(const char* imageSrc);
+    // Load a cubemap from 6 HDR faces in a directory (px/nx/py/ny/pz/nz). 
+    unsigned int createTexture(const char* basePath);
 
     void printVersion() const;
     void printHelp() const;

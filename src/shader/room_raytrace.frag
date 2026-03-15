@@ -10,6 +10,7 @@ uniform vec3 u_cam_right;
 uniform vec3 u_cam_up;
 uniform float u_fov_y;      // in radians
 uniform vec2 u_resolution;  // framebuffer size
+uniform samplerCube u_env_map; // cubemap HDR environment map
 
 uniform vec3 u_light_pos;
 uniform vec3 u_light_color;
@@ -129,6 +130,13 @@ bool isInShadow(vec3 p, vec3 lightPos) {
 
     return shadowHit.hit;
 }
+vec3 sampleEnv(vec3 dir) {
+    vec3 hdr = texture(u_env_map, normalize(dir)).rgb;
+    // Simple Reinhard + gamma tone mapping
+    vec3 mapped = hdr / (hdr + vec3(1.0));
+    mapped = pow(mapped, vec3(1.0 / 2.2));
+    return mapped;
+}
 
 void main() {
     // Generate ray direction from camera through pixel
@@ -150,43 +158,8 @@ void main() {
     vec3 rd = normalize(rd_cam.x * u_cam_right + rd_cam.y * u_cam_up + rd_cam.z * u_cam_forward);
     vec3 ro = u_cam_pos;
 
-    // Ray march / trace against analytic geometry
-    HitInfo hit;
-    hit.t = 1e9;
-    hit.hit = false;
-
-    // Intersect room walls
-    intersectRoom(ro, rd, hit);
-
-    // Intersect a sphere in the room
-    intersectSphere(ro, rd, hit, vec3(0.0, -0.5, 0.0), 0.5, vec3(0.7, 0.7, 0.9));
-
-    vec3 color = vec3(0.0);
-
-    if (hit.hit) {
-        vec3 p = ro + rd * hit.t;
-        vec3 n = hit.normal;
-
-        // Simple Lambert shading
-        vec3 L = normalize(u_light_pos - p);
-        float diff = max(dot(n, L), 0.0);
-
-        // Shadow
-        float shadow = isInShadow(p, u_light_pos) ? 0.0 : 1.0;
-
-        float attenuation = 1.0 / max(length(u_light_pos - p), 1.0);
-        vec3 light = u_light_color * u_light_intensity * diff * attenuation * shadow;
-
-        vec3 ambient = 0.05 * hit.color;
-        color = ambient + hit.color * light;
-
-        // Tone down brightness
-        color = clamp(color, 0.0, 1.0);
-    } else {
-        // Background color
-        color = vec3(0.02, 0.02, 0.05);
-    }
+    // 现在不再与房间/球体求交，直接把 HDR 环境贴图当天空盒
+    vec3 color = sampleEnv(rd);
 
     FragColor = vec4(color, 1.0);
 }
-

@@ -13,6 +13,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
+#include <cstring>
 
 #include "../utils/logger.hpp"
 #include "../utils/string_utils.hpp"
@@ -228,6 +230,10 @@ int App::run(int argc, char* argv[]) {
             glUniform1f(loc_light_intensity, m_lightIntensity);
         }
 
+        // Bind environment cubemap to texture unit 0 for the ray tracing shader
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, m_texture);
+
         glBindVertexArray(m_fullscreenVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
@@ -265,15 +271,27 @@ void App::initRendering() {
 
     m_raytraceProgram = createShaderProgram(vertSrc.c_str(), fragSrc.c_str());
 
-    const char* imgSrc = "D:/Code/Cpp/black_hole/assets/beautiful-galactic-core-milky-way-with-rho-ophiuchi-cloud-complex-long-exposure-photograph.jpg";
+    // Load cubemap from separate faces in assets/Nebula6 (px/nx/py/ny/pz/nz).
+    const char* imgSrc = "D:/Code/Cpp/black_hole/assets/Nebula6";
     m_texture = createTexture(imgSrc);
 
+    // Bind environment map sampler to texture unit 0 once at init
+    glUseProgram(m_raytraceProgram);
+    int loc_env = glGetUniformLocation(m_raytraceProgram, "u_env_map");
+    if (loc_env >= 0) {
+        glUniform1i(loc_env, 0);
+    }
+    glUseProgram(0);
 }
 
 void App::shutdownRendering() {
     if (m_raytraceProgram != 0) {
         glDeleteProgram(m_raytraceProgram);
         m_raytraceProgram = 0;
+    }
+    if (m_texture != 0) {
+        glDeleteTextures(1, &m_texture);
+        m_texture = 0;
     }
     if (m_fullscreenVao != 0) {
         glDeleteVertexArrays(1, &m_fullscreenVao);
@@ -300,39 +318,79 @@ unsigned int App::compileShader(unsigned int type, const char* src) {
     return shader;
 }
 
-unsigned int App::createTexture(const char* imageSrc) {
-    unsigned int texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
+unsigned int App::createTexture(const char* basePath) {
+    // Load a cubemap from 6 HDR faces stored in a directory:
+    //   px.hdr, nx.hdr, py.hdr, ny.hdr, pz.hdr, nz.hdr
+    std::string base(basePath ? basePath : "");
+    if (!base.empty() && base.back() != '/' && base.back() != '\\') {
+        base.push_back('/');
+    }
 
-    // set the texture wrapping parameters
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); // set texture wrapping to GL_REPEAT (default wrapping method)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    // set texture filtering parameters
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    const char* faceNames[6] = {"px.hdr", "nx.hdr", "py.hdr", "ny.hdr", "pz.hdr", "nz.hdr"};
 
-    int width, height, nrChannels;
-    unsigned char *data = stbi_load(imageSrc, &width, &height, &nrChannels, 0);
-    if (data)
+    int width = 0, height = 0, nrChannels = 0;
+    GLenum format = GL_RGB;
+    GLenum internalFormat = GL_RGB16F;
+
+    // First, load +X to determine resolution and format.
     {
-        GLenum format;
-        if (nrChannels == 1)
+        std::string path = base + faceNames[0];
+        float* data = stbi_loadf(path.c_str(), &width, &height, &nrChannels, 0);
+        if (!data) {
+            throw std::runtime_error("Failed to load cubemap face: " + path);
+        }
+        if (width <= 0 || height <= 0) {
+            stbi_image_free(data);
+            throw std::runtime_error("Cubemap face has invalid resolution: " + path);
+        }
+
+        if (nrChannels == 1) {
             format = GL_RED;
-        else if (nrChannels == 3)
+            internalFormat = GL_R16F;
+        } else if (nrChannels == 3) {
             format = GL_RGB;
-        else if (nrChannels == 4)
+            internalFormat = GL_RGB16F;
+        } else if (nrChannels == 4) {
             format = GL_RGBA;
+            internalFormat = GL_RGBA16F;
+        }
 
-        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-        glGenerateMipmap(GL_TEXTURE_2D);
+        // Create cubemap and upload first face.
+        unsigned int texture = 0;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, texture);
+
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+                     0, internalFormat, width, height, 0, format, GL_FLOAT, data);
+        stbi_image_free(data);
+
+        // Upload remaining faces.
+        for (int i = 1; i < 6; ++i) {
+            int w = 0, h = 0, ch = 0;
+            std::string facePath = base + faceNames[i];
+            float* faceData = stbi_loadf(facePath.c_str(), &w, &h, &ch, 0);
+            if (!faceData) {
+                throw std::runtime_error("Failed to load cubemap face: " + facePath);
+            }
+            if (w != width || h != height || ch != nrChannels) {
+                stbi_image_free(faceData);
+                throw std::runtime_error("Cubemap faces have inconsistent resolution or channels");
+            }
+
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
+                         0, internalFormat, width, height, 0, format, GL_FLOAT, faceData);
+            stbi_image_free(faceData);
+        }
+
+        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+        return texture;
     }
-    else
-    {
-        throw std::runtime_error("Failed to load texture");
-    }
-    stbi_image_free(data);
-    return texture;
 }
 
 unsigned int App::createShaderProgram(const char* vertexSrc, const char* fragmentSrc) {
