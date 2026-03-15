@@ -291,122 +291,120 @@ void adiskColor(vec3 pos, inout vec3 color, inout float alpha) {
 
     // --- 1. 基础盘体形状与衰减 ---
     float r = length(pos.xz);
+    float sphericalR = length(pos); // 使用球坐标半径处理辉光，避免圆锥形状
     
-    // 如果不在吸积盘范围内，直接返回
-    if (r < innerRadius * 0.9 || r > outerRadius * 1.5) return;
-
+    // 扩大计算范围，允许在盘体外部积累微弱的光晕（Glow）
     // 垂直方向厚度：中心薄，边缘稍厚，形成喇叭口（Flare）形状
-    float flareThickness = u_disk_thickness * (1.0 + (r - innerRadius) * 0.2);
+    float flareThickness = u_disk_thickness * (1.0 + max(0.0, r - innerRadius) * 0.2);
+    
     // 高斯衰减使边缘非常柔和
     float verticalDensity = exp(-pow(abs(pos.y) / flareThickness, 2.5));
     
     // 径向衰减：在内边缘有一个锐利的截断（因为物质掉入视界），外边缘缓慢平滑过渡
     float radialDensity = smoothstep(innerRadius * 0.95, innerRadius * 1.2, r) * 
-                          pow(smoothstep(outerRadius * 1.5, outerRadius * 0.5, r), 1.5);
+                          pow(smoothstep(outerRadius * 2.0, outerRadius * 0.5, r), 1.5);
                           
     float baseDensity = verticalDensity * radialDensity;
-    if (baseDensity < 0.001) return;
+    
+    // 全局光晕 (Halo/Glow) 效果：改用球形距离衰减，解决上下两极出现“圆锥”的问题
+    float haloDensity = 0.0;
+    if (sphericalR > innerRadius * 0.8 && sphericalR < outerRadius * 2.5) {
+        // 光晕基于到原点的球面距离和偏离赤道面的角度
+        float distFalloff = exp(-max(0.0, sphericalR - innerRadius * 1.2) * 0.8);
+        // 让光晕呈现扁平的椭球状，而不是硬截断的圆柱/圆锥
+        float angleFalloff = exp(-abs(pos.y) / (sphericalR * 0.5 + 0.1)); 
+        haloDensity = 0.002 * distFalloff * angleFalloff;
+    }
+    
+    if (baseDensity < 0.001 && haloDensity < 0.0001) return;
 
     // --- 2. 开普勒轨道旋转与角速度 ---
     // 越靠近黑洞转得越快: omega ~ r^(-1.5)
-    // 为了视觉震撼，放大内圈旋转速度
-    float omega = 4.0 * pow(innerRadius / max(r, innerRadius * 0.5), 1.5);
+    float omega = 3.5 * pow(innerRadius / max(r, innerRadius * 0.5), 1.5);
     float angle = atan(pos.z, pos.x);
-    // 当前点随时间旋转后的相位
     float phase = angle + u_time * omega;
 
-    // --- 3. 构造极度气态的漩涡结构 (Vortex Structure) ---
-    // 使用极坐标变形来产生螺旋臂和丝状气带
-    vec2 polar = vec2(r, phase);
+    // 只有在主体结构内才计算昂贵的噪声
+    float structure = 1.0;
+    float finalDensity = haloDensity * 2.0; // 降低默认光晕密度，防止过曝
+    float gasClouds = 0.0;
     
-    // 螺旋臂基础：将 r 映射到 phase 上形成螺旋
-    float spiralArms = sin(polar.y * 3.0 - r * 1.5);
-    // 让螺旋臂不要太死板，加入一些粗糙的不规则性
-    spiralArms = smoothstep(-0.5, 1.0, spiralArms) * 0.5 + 0.5;
+    if (baseDensity >= 0.001) {
+        // --- 3. 构造极度气态的漩涡结构 (Vortex Structure) ---
+        vec2 polar = vec2(r, phase);
+        float spiralArms = sin(polar.y * 3.0 - r * 1.5);
+        spiralArms = smoothstep(-0.5, 1.0, spiralArms) * 0.5 + 0.5;
 
-    // --- 4. 高质量流体噪声 (Fluid-like fBM) ---
-    // 在一个旋转的坐标系中采样 3D 噪声，模拟气体絮流
-    vec3 rotPos = vec3(r * cos(phase), pos.y, r * sin(phase));
-    
-    // 使用一个随半径和时间拉伸的坐标，制造被引力撕裂的丝状感觉 (Spaghetti effect)
-    vec3 noisePos = rotPos * u_disk_noise_scale;
-    noisePos.x *= 1.0 + r * 0.1; // 径向拉伸
-    noisePos.z *= 1.0 + r * 0.1;
-    
-    float noiseVal = 0.0;
-    float amp = 0.5;
-    float freq = 1.0;
-    // 增加八度数以获得更细碎的气态边缘
-    for (int i = 0; i < 5; ++i) {
-        // 随时间微小物化流动，让气体看起来是活的
-        vec3 flowPos = noisePos * freq + vec3(0.0, u_time * 0.2, u_time * 0.1 * float(i));
-        noiseVal += amp * noise3(flowPos);
-        freq *= 2.1; // lacunarity
-        amp *= 0.45; // gain
+        // --- 4. 高质量流体噪声 (Fluid-like fBM) ---
+        vec3 rotPos = vec3(r * cos(phase), pos.y, r * sin(phase));
+        vec3 noisePos = rotPos * u_disk_noise_scale;
+        noisePos.x *= 1.0 + r * 0.1;
+        noisePos.z *= 1.0 + r * 0.1;
+        
+        float noiseVal = 0.0;
+        float amp = 0.5;
+        float freq = 1.0;
+        for (int i = 0; i < 4; ++i) { // 稍微减少一次迭代优化性能
+            vec3 flowPos = noisePos * freq + vec3(0.0, u_time * 0.15, u_time * 0.1 * float(i));
+            noiseVal += amp * noise3(flowPos);
+            freq *= 2.0;
+            amp *= 0.5;
+        }
+        
+        gasClouds = smoothstep(0.3, 0.8, noiseVal);
+        structure = mix(gasClouds, gasClouds * spiralArms * 1.5, 0.6);
+        
+        // 降低基础盘的密度乘数，防止过亮
+        finalDensity += baseDensity * structure * 10.0; 
     }
-    
-    // 将噪声重映射，创造高对比度的丝状气云
-    float gasClouds = smoothstep(0.3, 0.8, noiseVal);
-    
-    // 结合螺旋臂和气云
-    float structure = mix(gasClouds, gasClouds * spiralArms * 1.5, 0.6);
-    
-    // 最终密度 = 基础形状 * 气态结构
-    float finalDensity = baseDensity * structure * 20.0;
 
     // --- 5. 温度与颜色分布 (Blackbody-like) ---
-    // 内圈温度极高（蓝白），外圈逐渐冷却（黄红暗）
     float tempNorm = clamp((r - innerRadius) / (outerRadius * 0.8 - innerRadius), 0.0, 1.0);
-    // 噪声扰动温度，亮的地方更热
     tempNorm = clamp(tempNorm - gasClouds * 0.3, 0.0, 1.0);
     
-    // 使用非线性映射让高温区（蓝白）更加集中在视界边缘
-    vec3 hotColor = vec3(1.0, 0.9, 0.7);   // 内圈白偏黄
-    vec3 midColor = u_disk_hot_color;      // 中圈橙红
-    vec3 coldColor = u_disk_base_color;    // 外圈暗红
+    vec3 hotColor = vec3(1.0, 0.9, 0.7);
+    vec3 midColor = u_disk_hot_color;
+    vec3 coldColor = u_disk_base_color;
     
     vec3 gasColor;
-    if (tempNorm < 0.3) {
+    if (baseDensity < 0.001) {
+        gasColor = mix(hotColor, midColor, 0.6); // 稍微偏暖的光晕颜色
+    } else if (tempNorm < 0.3) {
         gasColor = mix(hotColor, midColor, tempNorm / 0.3);
     } else {
         gasColor = mix(midColor, coldColor, (tempNorm - 0.3) / 0.7);
     }
 
-    // --- 6. 多普勒偏折 (Doppler Beaming) - 强化星际穿越感 ---
-    // 气体朝向我们运动的一侧蓝移且变亮，背离的一侧红移且变暗
+    // --- 6. 多普勒偏折 (Doppler Beaming) ---
     vec3 tangentVel = normalize(vec3(-pos.z, 0.0, pos.x));
     vec3 viewDir = normalize(pos - u_cam_pos);
     float dopplerCos = dot(tangentVel, viewDir);
     
-    // 相对论性多普勒增强系数 D = 1 / (gamma * (1 - v*cos))
-    // 这里做一个夸张的艺术化近似：
-    float v_c = 0.7 * pow(innerRadius / r, 0.5); // 假设内圈速度达 0.7c
-    float dopplerFactor = pow((1.0 + v_c * dopplerCos) / sqrt(1.0 - v_c*v_c), 3.0);
+    float v_c = 0.6 * pow(innerRadius / max(r, innerRadius * 0.8), 0.5); // 降低最大速度近似，减弱极端两极分化
+    float dopplerFactor = pow((1.0 + v_c * dopplerCos) / sqrt(1.0 - v_c*v_c), 2.5); // 指数稍微降低
     
-    // 同时稍微影响颜色（蓝移变蓝，红移变红）
     vec3 shiftColor = gasColor;
     if (dopplerCos > 0.0) {
-        shiftColor = mix(gasColor, vec3(0.8, 0.9, 1.0), dopplerCos * 0.5); // 蓝移发白
+        shiftColor = mix(gasColor, vec3(0.9, 0.95, 1.0), dopplerCos * 0.4);
     } else {
-        shiftColor = mix(gasColor, vec3(1.0, 0.3, 0.1), -dopplerCos * 0.5); // 红移发红
+        shiftColor = mix(gasColor, vec3(1.0, 0.4, 0.2), -dopplerCos * 0.4);
     }
 
     // --- 7. 发光与吸收积分 ---
-    // 越靠近中心内在发光越强
-    float intrinsicLuminosity = 1.0 / (pow(r / innerRadius, 2.0) + 0.01);
+    float intrinsicLuminosity = 1.0 / (pow(max(r, innerRadius*0.9) / innerRadius, 2.0) + 0.1);
     
-    float brightness = u_disk_emission * dopplerFactor * intrinsicLuminosity;
+    // 整体亮度由 uniform 控制，防止强光晕叠加导致过曝
+    float brightness = u_disk_emission * 0.6 * dopplerFactor * intrinsicLuminosity; 
     
-    // 光学深度：气体越浓，遮挡光线越多
-    float opticalDepth = finalDensity * 0.05; 
+    float opticalDepth = finalDensity * 0.08; // 稍微增加一点阻挡，让层次更分明
     
-    // 只有在存在密度时才进行颜色叠加
-    if (opticalDepth > 0.0001) {
-        vec3 emission = shiftColor * brightness * finalDensity * 2.0;
+    if (opticalDepth > 0.00001) {
+        // 光晕的发光系数相对盘体减弱
+        float emissionBoost = (baseDensity < 0.001) ? 2.5 : 1.5; 
+        vec3 emission = shiftColor * brightness * finalDensity * emissionBoost;
         float transmittance = exp(-opticalDepth);
         
-        // 解析积分近似：(1 - exp(-tau)) * (Emission / Extinction)
-        vec3 stepContribution = emission * (1.0 - transmittance) / max(opticalDepth, 0.001);
+        vec3 stepContribution = emission * (1.0 - transmittance) / max(opticalDepth, 0.0001);
         
         color += stepContribution * alpha;
         alpha *= transmittance;
@@ -418,13 +416,22 @@ vec3 traceBlackHole(vec3 ro, vec3 rd) {
     vec3 v = normalize(rd);
     vec3 color = vec3(0.0);
     float alpha = 1.0;
+    
+    vec3 globalHalo = vec3(0.0);
 
     for (int i = 0; i < MAX_STEPS; ++i) {
         float r = length(x);
 
         // 事件视界内：黑洞（完全吸收）
         if (r < SCHWARZSCHILD_RADIUS) {
-            return color; // 仅剩已积累的盘体发光
+            return color + globalHalo * alpha; 
+        }
+        
+        // 围绕光子球的强引力辉光 (减弱强度，使其更加柔和)
+        float photonSphereDist = abs(r - SCHWARZSCHILD_RADIUS * 1.5);
+        if (photonSphereDist < 0.8) {
+            float pHalo = 0.0005 * exp(-photonSphereDist * 5.0);
+            globalHalo += vec3(1.0, 0.85, 0.65) * pHalo * u_disk_emission;
         }
 
         // 吸积盘体积发光
@@ -432,16 +439,15 @@ vec3 traceBlackHole(vec3 ro, vec3 rd) {
             adiskColor(x, color, alpha);
         }
 
-        // 远离黑洞或已经完全不透明：加上远处天空盒
+        // 远离黑洞或已经完全不透明
         if (r > FAR_DISTANCE || alpha < 0.001) {
-            return color + sampleEnv(v) * alpha;
+            return color + globalHalo * alpha + sampleEnv(v) * alpha;
         }
 
         rk4Step(x, v);
     }
 
-    // 数值积分未明显逃逸或落入：退化为用当前方向采样环境 + 已有盘发光。
-    return color + sampleEnv(v) * alpha;
+    return color + globalHalo * alpha + sampleEnv(v) * alpha;
 }
 
 void main() {

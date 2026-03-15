@@ -144,7 +144,7 @@ int App::run(int argc, char* argv[]) {
         // Controls window
         ImGui::Begin("Ray Tracing Controls");
         ImGui::Text("Camera");
-        ImGui::SliderFloat3("Position", m_camPos, -50.0f, 50.0f);
+        ImGui::SliderFloat3("Position", m_camPos, -20.0f, 20.0f);
         ImGui::SliderFloat("Yaw (deg)", &m_camYaw, -180.0f, 180.0f);
         ImGui::SliderFloat("Pitch (deg)", &m_camPitch, -89.0f, 89.0f);
         ImGui::SliderFloat("FOV Y (deg)", &m_fovY, 20.0f, 90.0f);
@@ -158,11 +158,11 @@ int App::run(int argc, char* argv[]) {
         ImGui::Separator();
         ImGui::Text("Black Hole / Disk");
         ImGui::Checkbox("Enable Disk", &m_enableDisk);
-        ImGui::SliderFloat("Disk Inner Radius", &m_diskInnerRadius, 0.1f, 5.0f);
-        ImGui::SliderFloat("Disk Outer Radius", &m_diskOuterRadius, 0.2f, 10.0f);
-        ImGui::SliderFloat("Disk Thickness", &m_diskThickness, 0.01f, 0.5f);
-        ImGui::SliderFloat("Disk Noise Scale", &m_diskNoiseScale, 0.5f, 10.0f);
-        ImGui::SliderFloat("Disk Emission", &m_diskEmission, 0.1f, 5.0f);
+        ImGui::SliderFloat("Disk Inner Radius", &m_diskInnerRadius, 0.1f, 10.0f);
+        ImGui::SliderFloat("Disk Outer Radius", &m_diskOuterRadius, 0.2f, 20.0f);
+        ImGui::SliderFloat("Disk Thickness", &m_diskThickness, 0.01f, 1.0f);
+        ImGui::SliderFloat("Disk Noise Scale", &m_diskNoiseScale, 0.1f, 10.0f);
+        ImGui::SliderFloat("Disk Emission", &m_diskEmission, 0.1f, 10.0f);
         ImGui::ColorEdit3("Disk Base Color", m_diskBaseColor);
         ImGui::ColorEdit3("Disk Hot Color", m_diskHotColor);
 
@@ -324,14 +324,14 @@ void App::initRendering() {
     glGenVertexArrays(1, &m_fullscreenVao);
 
     // Load shaders from files (relative to working directory)
-    std::string vertSrc = loadFileToString("D:/Code/Cpp/black_hole/src/shader/fullscreen.vert");
-    // std::string fragSrc = loadFileToString("D:/Code/Cpp/black_hole/src/shader/room_raytrace.frag");
-    std::string fragSrc = loadFileToString("D:/Code/Cpp/black_hole/src/shader/black_hole.frag");
+    std::string vertSrc = loadFileToString("./shader/fullscreen.vert");
+    // std::string fragSrc = loadFileToString("./shader/room_raytrace.frag");
+    std::string fragSrc = loadFileToString("./shader/black_hole.frag");
     
     m_raytraceProgram = createShaderProgram(vertSrc.c_str(), fragSrc.c_str());
 
     // Load cubemap from separate faces in assets/Nebula6 (px/nx/py/ny/pz/nz).
-    const char* imgSrc = "D:/Code/Cpp/black_hole/assets/Nebula6";
+    const char* imgSrc = "./assets/Nebula6";
     m_texture = createTexture(imgSrc);
 
     // Bind environment map sampler to texture unit 0 once at init
