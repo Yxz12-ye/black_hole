@@ -284,96 +284,133 @@ void rk4Step(inout vec3 x, inout vec3 v) {
 // - 如果轨迹到达 r > FAR_DISTANCE，则认为到达无穷远，
 //   使用此处的切向方向 v 作为“来自天空”的方向，从 cubemap 采样。
 
-// 盘体积发光（参考 reference/blackhole_main.frag 的 adiskColor，但用 fBM）
+// 盘体积发光（完全重写，追求星际穿越般的震撼气态和旋转效果）
 void adiskColor(vec3 pos, inout vec3 color, inout float alpha) {
     float innerRadius = u_disk_inner_radius;
     float outerRadius = u_disk_outer_radius;
 
-    // 椭球形密度：在 (x,z) 向外、y 方向向上衰减
-    float density = max(0.0, 1.0 - length(pos / vec3(outerRadius, u_disk_thickness, outerRadius)));
-    if (density < 0.001) {
-        return;
+    // --- 1. 基础盘体形状与衰减 ---
+    float r = length(pos.xz);
+    
+    // 如果不在吸积盘范围内，直接返回
+    if (r < innerRadius * 0.9 || r > outerRadius * 1.5) return;
+
+    // 垂直方向厚度：中心薄，边缘稍厚，形成喇叭口（Flare）形状
+    float flareThickness = u_disk_thickness * (1.0 + (r - innerRadius) * 0.2);
+    // 高斯衰减使边缘非常柔和
+    float verticalDensity = exp(-pow(abs(pos.y) / flareThickness, 2.5));
+    
+    // 径向衰减：在内边缘有一个锐利的截断（因为物质掉入视界），外边缘缓慢平滑过渡
+    float radialDensity = smoothstep(innerRadius * 0.95, innerRadius * 1.2, r) * 
+                          pow(smoothstep(outerRadius * 1.5, outerRadius * 0.5, r), 1.5);
+                          
+    float baseDensity = verticalDensity * radialDensity;
+    if (baseDensity < 0.001) return;
+
+    // --- 2. 开普勒轨道旋转与角速度 ---
+    // 越靠近黑洞转得越快: omega ~ r^(-1.5)
+    // 为了视觉震撼，放大内圈旋转速度
+    float omega = 4.0 * pow(innerRadius / max(r, innerRadius * 0.5), 1.5);
+    float angle = atan(pos.z, pos.x);
+    // 当前点随时间旋转后的相位
+    float phase = angle + u_time * omega;
+
+    // --- 3. 构造极度气态的漩涡结构 (Vortex Structure) ---
+    // 使用极坐标变形来产生螺旋臂和丝状气带
+    vec2 polar = vec2(r, phase);
+    
+    // 螺旋臂基础：将 r 映射到 phase 上形成螺旋
+    float spiralArms = sin(polar.y * 3.0 - r * 1.5);
+    // 让螺旋臂不要太死板，加入一些粗糙的不规则性
+    spiralArms = smoothstep(-0.5, 1.0, spiralArms) * 0.5 + 0.5;
+
+    // --- 4. 高质量流体噪声 (Fluid-like fBM) ---
+    // 在一个旋转的坐标系中采样 3D 噪声，模拟气体絮流
+    vec3 rotPos = vec3(r * cos(phase), pos.y, r * sin(phase));
+    
+    // 使用一个随半径和时间拉伸的坐标，制造被引力撕裂的丝状感觉 (Spaghetti effect)
+    vec3 noisePos = rotPos * u_disk_noise_scale;
+    noisePos.x *= 1.0 + r * 0.1; // 径向拉伸
+    noisePos.z *= 1.0 + r * 0.1;
+    
+    float noiseVal = 0.0;
+    float amp = 0.5;
+    float freq = 1.0;
+    // 增加八度数以获得更细碎的气态边缘
+    for (int i = 0; i < 5; ++i) {
+        // 随时间微小物化流动，让气体看起来是活的
+        vec3 flowPos = noisePos * freq + vec3(0.0, u_time * 0.2, u_time * 0.1 * float(i));
+        noiseVal += amp * noise3(flowPos);
+        freq *= 2.1; // lacunarity
+        amp *= 0.45; // gain
+    }
+    
+    // 将噪声重映射，创造高对比度的丝状气云
+    float gasClouds = smoothstep(0.3, 0.8, noiseVal);
+    
+    // 结合螺旋臂和气云
+    float structure = mix(gasClouds, gasClouds * spiralArms * 1.5, 0.6);
+    
+    // 最终密度 = 基础形状 * 气态结构
+    float finalDensity = baseDensity * structure * 20.0;
+
+    // --- 5. 温度与颜色分布 (Blackbody-like) ---
+    // 内圈温度极高（蓝白），外圈逐渐冷却（黄红暗）
+    float tempNorm = clamp((r - innerRadius) / (outerRadius * 0.8 - innerRadius), 0.0, 1.0);
+    // 噪声扰动温度，亮的地方更热
+    tempNorm = clamp(tempNorm - gasClouds * 0.3, 0.0, 1.0);
+    
+    // 使用非线性映射让高温区（蓝白）更加集中在视界边缘
+    vec3 hotColor = vec3(1.0, 0.9, 0.7);   // 内圈白偏黄
+    vec3 midColor = u_disk_hot_color;      // 中圈橙红
+    vec3 coldColor = u_disk_base_color;    // 外圈暗红
+    
+    vec3 gasColor;
+    if (tempNorm < 0.3) {
+        gasColor = mix(hotColor, midColor, tempNorm / 0.3);
+    } else {
+        gasColor = mix(midColor, coldColor, (tempNorm - 0.3) / 0.7);
     }
 
-    density *= pow(max(0.0, 1.0 - abs(pos.y) / u_disk_thickness), 2.0);
-
-    // 内圈（近 ISCO）设为零密度
-    density *= smoothstep(innerRadius, innerRadius * 1.1, length(pos));
-    if (density < 0.001) {
-        return;
+    // --- 6. 多普勒偏折 (Doppler Beaming) - 强化星际穿越感 ---
+    // 气体朝向我们运动的一侧蓝移且变亮，背离的一侧红移且变暗
+    vec3 tangentVel = normalize(vec3(-pos.z, 0.0, pos.x));
+    vec3 viewDir = normalize(pos - u_cam_pos);
+    float dopplerCos = dot(tangentVel, viewDir);
+    
+    // 相对论性多普勒增强系数 D = 1 / (gamma * (1 - v*cos))
+    // 这里做一个夸张的艺术化近似：
+    float v_c = 0.7 * pow(innerRadius / r, 0.5); // 假设内圈速度达 0.7c
+    float dopplerFactor = pow((1.0 + v_c * dopplerCos) / sqrt(1.0 - v_c*v_c), 3.0);
+    
+    // 同时稍微影响颜色（蓝移变蓝，红移变红）
+    vec3 shiftColor = gasColor;
+    if (dopplerCos > 0.0) {
+        shiftColor = mix(gasColor, vec3(0.8, 0.9, 1.0), dopplerCos * 0.5); // 蓝移发白
+    } else {
+        shiftColor = mix(gasColor, vec3(1.0, 0.3, 0.1), -dopplerCos * 0.5); // 红移发红
     }
 
-    vec3 spherical = toSpherical(pos); // (rho, theta, phi)
-    spherical.y *= 2.0;
-    spherical.z *= 4.0;
-
-    // 径向 1/r^p 衰减（数值上稍微降一点，避免过曝）
-    density *= 1.0 / pow(max(spherical.x, SCHWARZSCHILD_RADIUS * 1.1), 2.0);
-    density *= 3200.0;
-
-    // 轨道角速度近似 ~ r^(-3/2)，用于让内圈转得更快，外圈更慢
-    float radial = length(pos.xz);
-    float invR = 1.0 / max(radial, innerRadius * 0.5);
-    float omega = 3.0 * pow(invR, 1.5);
-
-    // fBM 噪声，使用世界坐标避免径向周期性同心圆
-    float noise = 1.0;
-    vec3 p = pos * u_disk_noise_scale;
-    for (int i = 1; i <= 5; ++i) {
-        noise *= 0.5 * fbm(p) + 0.5;
-        float dir = ((i & 1) == 0) ? 1.0 : -1.0;
-        float angle = dir * u_time * omega * 0.1 * float(i);
-        float s = sin(angle);
-        float c = cos(angle);
-        // 绕Y轴旋转（赤道平面旋转）
-        float oldX = p.x;
-        p.x = oldX * c - p.z * s;
-        p.z = oldX * s + p.z * c;
-        p *= 2.0;
+    // --- 7. 发光与吸收积分 ---
+    // 越靠近中心内在发光越强
+    float intrinsicLuminosity = 1.0 / (pow(r / innerRadius, 2.0) + 0.01);
+    
+    float brightness = u_disk_emission * dopplerFactor * intrinsicLuminosity;
+    
+    // 光学深度：气体越浓，遮挡光线越多
+    float opticalDepth = finalDensity * 0.05; 
+    
+    // 只有在存在密度时才进行颜色叠加
+    if (opticalDepth > 0.0001) {
+        vec3 emission = shiftColor * brightness * finalDensity * 2.0;
+        float transmittance = exp(-opticalDepth);
+        
+        // 解析积分近似：(1 - exp(-tau)) * (Emission / Extinction)
+        vec3 stepContribution = emission * (1.0 - transmittance) / max(opticalDepth, 0.001);
+        
+        color += stepContribution * alpha;
+        alpha *= transmittance;
     }
-
-    // 柔和的热条纹，避免规则同心圆
-    float phase = spherical.y + u_time * omega + noise * 3.0;
-    float arc = sin(phase * 4.0 + noise * 2.0);
-    arc = smoothstep(0.2, 0.9, arc * 0.5 + 0.5);
-    float rim = smoothstep(innerRadius * 1.05, innerRadius * 1.8, radial) *
-                (1.0 - smoothstep(outerRadius * 0.6, outerRadius, radial));
-    float streakMask = arc * rim * 0.3;
-
-    // 在径向上加一点细噪声，打散“同心圆”感
-    float smallRadJitter = (fbm(pos * 0.3 * u_disk_noise_scale) - 0.5) * 0.15 * (outerRadius - innerRadius);
-    float jitteredR = clamp(radial + smallRadJitter, innerRadius, outerRadius);
-
-    // 内圈更热、外圈更冷的颜色渐变（加噪声扰动避免规则环）
-    float t = clamp((jitteredR - innerRadius) / max(outerRadius - innerRadius, 1e-4), 0.0, 1.0);
-    t += (noise - 0.5) * 0.12;
-    t = clamp(t, 0.0, 1.0);
-    vec3 dustColor = mix(u_disk_hot_color, u_disk_base_color, t);
-
-    vec3 diskNormal = normalize(vec3(0.0, 1.0, 0.0));
-    float viewCos = clamp(dot(-normalize(pos), diskNormal), 0.0, 1.0);
-
-    float brightness = u_disk_emission * (0.3 + 0.7 * viewCos);
-
-    // 结构强度 = fBM 纹理 * 轨道条纹增强（条纹强度稍微收一点，避免极亮炸白）
-    float structure = abs(noise) * mix(0.7, 1.4, clamp(streakMask, 0.0, 1.0));
-
-    // 为了避免外圈“同心圆”感，逐渐在外圈关掉细节结构，让它更像平滑的雾状光晕
-    float outerSmoothStart = mix(innerRadius, outerRadius, 0.55); // 开始变平滑的位置
-    float outerSmoothEnd   = outerRadius * 0.98;                  // 完全平滑的位置
-    float smoothFactor = clamp((jitteredR - outerSmoothStart) / max(outerSmoothEnd - outerSmoothStart, 1e-4), 0.0, 1.0);
-    structure = mix(structure, 1.0, smoothFactor);
-
-    // 体积发光 + 吸收：用一个更“物理”的公式防止一片白，同时减少 banding
-    float opticalDepth = density * structure * 0.00045; // 再稍微降一点，外圈更柔和
-    opticalDepth = clamp(opticalDepth, 0.0, 5.0);
-
-    vec3 emissionColor = dustColor * brightness;
-    float transmittance = exp(-opticalDepth);
-    vec3 stepContribution = (1.0 - transmittance) * emissionColor;
-
-    color += stepContribution * alpha;
-    alpha *= transmittance; // 更新剩余透射率
 }
 
 vec3 traceBlackHole(vec3 ro, vec3 rd) {
