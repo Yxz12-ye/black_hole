@@ -316,29 +316,38 @@ void adiskColor(vec3 pos, inout vec3 color, inout float alpha) {
     float invR = 1.0 / max(radial, innerRadius * 0.5);
     float omega = 3.0 * pow(invR, 1.5);
 
-    // fBM 噪声，沿方位角随半径差异化漂移，形成“条纹 + 旋涡”
+    // fBM 噪声，使用世界坐标避免径向周期性同心圆
     float noise = 1.0;
-    vec3 p = spherical;
+    vec3 p = pos * u_disk_noise_scale;
     for (int i = 1; i <= 5; ++i) {
-        noise *= 0.5 * fbm(p * float(i * i) * u_disk_noise_scale) + 0.5;
+        noise *= 0.5 * fbm(p) + 0.5;
         float dir = ((i & 1) == 0) ? 1.0 : -1.0;
-        p.y = spherical.y + dir * u_time * omega * (1.0 + 0.25 * float(i));
+        float angle = dir * u_time * omega * 0.1 * float(i);
+        float s = sin(angle);
+        float c = cos(angle);
+        // 绕Y轴旋转（赤道平面旋转）
+        float oldX = p.x;
+        p.x = oldX * c - p.z * s;
+        p.z = oldX * s + p.z * c;
+        p *= 2.0;
     }
 
-    // 在接近最亮半径附近叠加一圈高亮“热条纹”，增强结构感
-    float phase = spherical.y + u_time * omega;
-    float arc = sin(phase * 8.0);
+    // 柔和的热条纹，避免规则同心圆
+    float phase = spherical.y + u_time * omega + noise * 3.0;
+    float arc = sin(phase * 4.0 + noise * 2.0);
     arc = smoothstep(0.2, 0.9, arc * 0.5 + 0.5);
     float rim = smoothstep(innerRadius * 1.05, innerRadius * 1.8, radial) *
                 (1.0 - smoothstep(outerRadius * 0.6, outerRadius, radial));
-    float streakMask = arc * rim;
+    float streakMask = arc * rim * 0.3;
 
     // 在径向上加一点细噪声，打散“同心圆”感
     float smallRadJitter = (fbm(pos * 0.3 * u_disk_noise_scale) - 0.5) * 0.15 * (outerRadius - innerRadius);
     float jitteredR = clamp(radial + smallRadJitter, innerRadius, outerRadius);
 
-    // 内圈更热、外圈更冷的颜色渐变（用 jitter 后的半径）
+    // 内圈更热、外圈更冷的颜色渐变（加噪声扰动避免规则环）
     float t = clamp((jitteredR - innerRadius) / max(outerRadius - innerRadius, 1e-4), 0.0, 1.0);
+    t += (noise - 0.5) * 0.12;
+    t = clamp(t, 0.0, 1.0);
     vec3 dustColor = mix(u_disk_hot_color, u_disk_base_color, t);
 
     vec3 diskNormal = normalize(vec3(0.0, 1.0, 0.0));
