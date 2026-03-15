@@ -64,6 +64,7 @@ set(HEADERS
     src/app/app.hpp
     src/utils/logger.hpp
     src/utils/string_utils.hpp
+    ${CMAKE_SOURCE_DIR}/3rdparty/stb/stb_image.h
 )
 
 # ============================================================================
@@ -75,6 +76,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_SOURCE_DIR}/3rdparty/glad/include
+    ${CMAKE_SOURCE_DIR}/3rdparty/stb
+)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/shader/"
 )
 
 # ============================================================================
