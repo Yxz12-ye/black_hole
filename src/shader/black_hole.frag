@@ -331,21 +331,23 @@ void adiskColor(vec3 pos, inout vec3 color, inout float alpha) {
     
     if (baseDensity >= 0.001) {
         // --- 3. 构造极度气态的漩涡结构 (Vortex Structure) ---
-        vec2 polar = vec2(r, phase);
-        float spiralArms = sin(polar.y * 3.0 - r * 1.5);
+        // 螺旋臂保持角速度差异，但用旋转后的相位，这样旋臂依然随开普勒旋转扭曲，自然产生动态效果
+        float spiralArms = sin(phase * 3.0 - r * 1.5);
         spiralArms = smoothstep(-0.5, 1.0, spiralArms) * 0.5 + 0.5;
 
         // --- 4. 高质量流体噪声 (Fluid-like fBM) ---
-        vec3 rotPos = vec3(r * cos(phase), pos.y, r * sin(phase));
-        vec3 noisePos = rotPos * u_disk_noise_scale;
+        // 修复螺旋扭曲问题：噪声基于原始位置，仅对采样相位做旋转，不扭曲噪声空间本身
+        vec3 noisePos = vec3(pos.x, pos.y, pos.z) * u_disk_noise_scale;
         noisePos.x *= 1.0 + r * 0.1;
         noisePos.z *= 1.0 + r * 0.1;
         
         float noiseVal = 0.0;
         float amp = 0.5;
         float freq = 1.0;
-        for (int i = 0; i < 4; ++i) { // 稍微减少一次迭代优化性能
-            vec3 flowPos = noisePos * freq + vec3(0.0, u_time * 0.15, u_time * 0.1 * float(i));
+        for (int i = 0; i < 4; ++i) {
+            // 只有切向相位随时间旋转，保持噪声网格不被扭曲
+            float rotPhase = phase * freq;
+            vec3 flowPos = noisePos * freq + vec3(0.0, u_time * 0.15, 0.0) + vec3(cos(rotPhase), 0, sin(rotPhase)) * 0.05 * float(i);
             noiseVal += amp * noise3(flowPos);
             freq *= 2.0;
             amp *= 0.5;
