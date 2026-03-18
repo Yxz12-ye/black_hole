@@ -318,36 +318,46 @@ void adiskColor(vec3 pos, inout vec3 color, inout float alpha) {
     
     if (baseDensity < 0.001 && haloDensity < 0.0001) return;
 
-    // --- 2. 开普勒轨道旋转与角速度 ---
-    // 越靠近黑洞转得越快: omega ~ r^(-1.5)
-    float omega = 3.5 * pow(innerRadius / max(r, innerRadius * 0.5), 1.5);
+    // --- 2. 旋转与角速度 (修复缠绕困境) ---
     float angle = atan(pos.z, pos.x);
-    float phase = angle + u_time * omega;
+    
+    // 宏观旋转：使用统一的角速度，防止螺旋臂随着时间被无限卷紧
+    float macro_omega = 0.1; 
+    float macro_phase = angle + u_time * macro_omega;
 
     // 只有在主体结构内才计算昂贵的噪声
     float structure = 1.0;
-    float finalDensity = haloDensity * 2.0; // 降低默认光晕密度，防止过曝
+    float finalDensity = haloDensity * 2.0; 
     float gasClouds = 0.0;
     
     if (baseDensity >= 0.001) {
         // --- 3. 构造极度气态的漩涡结构 (Vortex Structure) ---
-        // 螺旋臂保持角速度差异，但用旋转后的相位，这样旋臂依然随开普勒旋转扭曲，自然产生动态效果
-        float spiralArms = sin(phase * 3.0 - r * 1.5);
+        // 使用 macro_phase 保持螺旋臂形状稳定不被卷坏
+        vec2 polar = vec2(r, macro_phase);
+        float spiralArms = sin(polar.y * 3.0 - r * 1.5);
         spiralArms = smoothstep(-0.5, 1.0, spiralArms) * 0.5 + 0.5;
 
         // --- 4. 高质量流体噪声 (Fluid-like fBM) ---
-        // 修复螺旋扭曲问题：噪声基于原始位置，仅对采样相位做旋转，不扭曲噪声空间本身
-        vec3 noisePos = vec3(pos.x, pos.y, pos.z) * u_disk_noise_scale;
+        // 微观流体：使用宏观旋转的坐标，但通过在噪声采样中加入时间偏移来模拟较差自转和扰动
+        vec3 rotPos = vec3(r * cos(macro_phase), pos.y, r * sin(macro_phase));
+        vec3 noisePos = rotPos * u_disk_noise_scale;
         noisePos.x *= 1.0 + r * 0.1;
         noisePos.z *= 1.0 + r * 0.1;
         
         float noiseVal = 0.0;
         float amp = 0.5;
         float freq = 1.0;
-        for (int i = 0; i < 4; ++i) {
-            // 只有切向相位随时间旋转，保持噪声网格不被扭曲
-            float rotPhase = phase * freq;
-            vec3 flowPos = noisePos * freq + vec3(0.0, u_time * 0.15, 0.0) + vec3(cos(rotPhase), 0, sin(rotPhase)) * 0.05 * float(i);
+        
+        // 模拟流体向内吸入和旋转的动态
+        float flowSpeed = 0.5;
+        
+        for (int i = 0; i < 4; ++i) { 
+            // 在噪声的 UV 空间中加入时间偏移，产生流体翻滚的效果，而不是直接扭曲坐标系
+            vec3 flowPos = noisePos * freq + vec3(
+                -u_time * flowSpeed, 
+                u_time * 0.15, 
+                u_time * flowSpeed * 0.8
+            );
             noiseVal += amp * noise3(flowPos);
             freq *= 2.0;
             amp *= 0.5;
@@ -356,7 +366,6 @@ void adiskColor(vec3 pos, inout vec3 color, inout float alpha) {
         gasClouds = smoothstep(0.3, 0.8, noiseVal);
         structure = mix(gasClouds, gasClouds * spiralArms * 1.5, 0.6);
         
-        // 降低基础盘的密度乘数，防止过亮
         finalDensity += baseDensity * structure * 10.0; 
     }
 
