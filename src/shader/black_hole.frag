@@ -159,7 +159,8 @@ float hash13(vec3 p) {
     return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
 }
 
-float noise3(vec3 p) {
+// Use a custom name instead of GLSL's built-in noise3 to avoid return-type conflicts.
+float valueNoise3(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
 
@@ -191,7 +192,7 @@ float fbm(vec3 p) {
     float frequency = 1.0;
 
     for (int i = 0; i < 5; ++i) {
-        value += amplitude * noise3(p * frequency);
+        value += amplitude * valueNoise3(p * frequency);
         frequency *= 2.0;
         amplitude *= 0.5;
     }
@@ -346,7 +347,7 @@ void adiskColor(vec3 pos, inout vec3 color, inout float alpha) {
         float freq = 1.0;
         for (int i = 0; i < 4; ++i) { // 稍微减少一次迭代优化性能
             vec3 flowPos = noisePos * freq + vec3(0.0, u_time * 0.15, u_time * 0.1 * float(i));
-            noiseVal += amp * noise3(flowPos);
+            noiseVal += amp * valueNoise3(flowPos);
             freq *= 2.0;
             amp *= 0.5;
         }
